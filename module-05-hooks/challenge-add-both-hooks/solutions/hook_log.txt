@@ -1,1 +1,4 @@
+PostToolUse normalized mcp__support__get_customer
+PostToolUse normalized mcp__support__lookup_order
 PreToolUse blocked refund CHG-5611 at 780.00 USD
+PostToolUse normalized mcp__support__escalate_to_human

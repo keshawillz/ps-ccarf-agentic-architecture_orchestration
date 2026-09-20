@@ -17,26 +17,31 @@ import sys
 from claude_agent_sdk import ClaudeAgentOptions, HookMatcher, query
 
 from messy_tools import ALL_SUPPORT_TOOLS, SUPPORT_SERVER
-from normalize import normalize_record
+from normalize import normalize_record, rebuild_like, extract_text
 
 MODEL = "claude-sonnet-5"
 QUESTION = "Email dana@brightleaf.example. When did each of my orders get placed, and what's the status of each?"
 
-
 async def normalize_output(input_data, tool_use_id, context):
     """Rewrite every date and status in the tool result before Claude sees it."""
     response = input_data.get("tool_response")
-    if not isinstance(response, dict):
+    text = extract_text(response)
+    if text == "":
+        print(f"  [hook] no text in tool_response: {response!r}"[:200])
         return {}
-    content = response.get("content", [])
-    if len(content) == 0:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        print(f"  [hook] tool_response was not JSON: {text[:80]!r}")
         return {}
-    data = json.loads(content[0].get("text", "{}"))
     cleaned = normalize_record(data)
     print("  [hook] normalized:", input_data["tool_name"])
-    new_response = {"content": [{"type": "text", "text": json.dumps(cleaned)}]}
-    return {"hookSpecificOutput": {"hookEventName": "PostToolUse",
-                                   "updatedToolOutput": new_response}}
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "updatedToolOutput": rebuild_like(response, json.dumps(cleaned)),
+        }
+    }
 
 
 async def main():

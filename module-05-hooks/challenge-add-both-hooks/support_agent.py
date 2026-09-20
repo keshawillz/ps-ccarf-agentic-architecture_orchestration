@@ -22,7 +22,7 @@ import json
 from claude_agent_sdk import ClaudeAgentOptions, HookMatcher, query
 
 from messy_tools import ALL_SUPPORT_TOOLS, PROCESS_REFUND, SUPPORT_SERVER, ORDERS, ledger
-from normalize import normalize_record
+from normalize import extract_text, normalize_record, rebuild_like
 
 MODEL = "claude-sonnet-5"
 REFUND_LIMIT_USD = 500.0

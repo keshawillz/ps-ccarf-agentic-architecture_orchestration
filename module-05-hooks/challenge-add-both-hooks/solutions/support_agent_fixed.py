@@ -16,7 +16,7 @@ import json
 from claude_agent_sdk import ClaudeAgentOptions, HookMatcher, query
 
 from messy_tools import ALL_SUPPORT_TOOLS, PROCESS_REFUND, SUPPORT_SERVER, ORDERS, ledger
-from normalize import normalize_record
+from normalize import extract_text, normalize_record, rebuild_like
 
 MODEL = "claude-sonnet-5"
 REFUND_LIMIT_USD = 500.0
@@ -46,19 +46,25 @@ def amount_for(charge_id):
 
 
 async def normalize_output(input_data, tool_use_id, context):
-    """Fix 1: rewrite dates and statuses before Claude reads the result."""
+    """Fix 1. Rewrite every date and status before Claude reads the result."""
     response = input_data.get("tool_response")
-    if not isinstance(response, dict):
+    text = extract_text(response)
+    if text == "":
+        log_hook(f"PostToolUse skipped, no text in tool_response: {response!r}"[:200])
         return {}
-    content = response.get("content", [])
-    if len(content) == 0:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        log_hook(f"PostToolUse skipped, not JSON: {text[:80]!r}")
         return {}
-    data = json.loads(content[0].get("text", "{}"))
     cleaned = normalize_record(data)
-    log_hook("PostToolUse normalized " + input_data["tool_name"])
-    new_response = {"content": [{"type": "text", "text": json.dumps(cleaned)}]}
-    return {"hookSpecificOutput": {"hookEventName": "PostToolUse",
-                                   "updatedToolOutput": new_response}}
+    log_hook(f"PostToolUse normalized {input_data['tool_name']}")
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "updatedToolOutput": rebuild_like(response, json.dumps(cleaned)),
+        }
+    }
 
 
 async def block_large_refund(input_data, tool_use_id, context):
