@@ -17,14 +17,21 @@ Run it:
 
 import asyncio
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    ResultMessage,
+    TextBlock,
+)
 
 MODEL = "claude-sonnet-5"
 APP_PATH = "../sample-app"
 
-BASELINE_TASK = f"""Read the code in {APP_PATH} and build an understanding of
-how refunds work. Trace process_refund from its entry point through every
-function it calls, and note where the policy limits are enforced.
+BASELINE_TASK = f"""Read the code in {APP_PATH} yourself and build an
+understanding of how refunds work. Trace process_refund from its entry point
+through every function it calls, and note where the policy limits are
+enforced.
 
 Summarize what you found in under 200 words. This summary is the baseline for
 further work, so be precise about file names and function names."""
@@ -42,6 +49,10 @@ def make_options(resume_id=None, fork=False):
     options = ClaudeAgentOptions(
         model=MODEL,
         allowed_tools=["Glob", "Grep", "Read"],
+        # The baseline has to do the reading itself, in its own transcript.
+        # If it delegates to a background subagent, the analysis lives in the
+        # subagent's session, and a fork of the baseline inherits nothing.
+        disallowed_tools=["Agent", "Task"],
         max_budget_usd=2.0,
     )
     if resume_id is not None:
@@ -50,17 +61,31 @@ def make_options(resume_id=None, fork=False):
     return options
 
 
+async def print_response(client):
+    """Print what the model says, and say so if it errors or says nothing."""
+    session_id = None
+    said_something = False
+    async for message in client.receive_response():
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock) and block.text.strip() != "":
+                    print(block.text)
+                    said_something = True
+        if isinstance(message, ResultMessage):
+            session_id = message.session_id
+            if message.is_error:
+                print(f"  [error] {message.result}")
+    if not said_something:
+        print("  (no text came back from this session)")
+    return session_id
+
+
 async def main():
     # Step 1: the expensive part. Read the code once.
     print("=== Baseline: analyzing the refund code ===")
-    baseline_id = None
     async with ClaudeSDKClient(options=make_options()) as client:
         await client.query(BASELINE_TASK)
-        async for message in client.receive_response():
-            if hasattr(message, "session_id"):
-                baseline_id = message.session_id
-            if hasattr(message, "result"):
-                print(message.result)
+        baseline_id = await print_response(client)
 
     print(f"\nBaseline session id: {baseline_id}")
 
@@ -71,18 +96,14 @@ async def main():
         options=make_options(resume_id=baseline_id, fork=True)
     ) as client:
         await client.query(BRANCH_ONE)
-        async for message in client.receive_response():
-            if hasattr(message, "result"):
-                print(message.result)
+        await print_response(client)
 
     print("\n=== Branch B: integration testing strategy ===")
     async with ClaudeSDKClient(
         options=make_options(resume_id=baseline_id, fork=True)
     ) as client:
         await client.query(BRANCH_TWO)
-        async for message in client.receive_response():
-            if hasattr(message, "result"):
-                print(message.result)
+        await print_response(client)
 
     print(
         "\nNeither branch re-read the code. Both inherited the baseline "
