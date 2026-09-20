@@ -1,0 +1,65 @@
+"""Clip 2: Clean up tool data with PostToolUse.
+
+The backends return dates three ways and order status as a bare number. A
+PostToolUse hook runs after each tool returns and before Claude reads the
+result, so one function fixes every tool at once. The hook replaces the tool
+output with updatedToolOutput.
+
+Run it:
+    python normalize_hook.py         hook on
+    python normalize_hook.py raw     hook off, see what Claude gets otherwise
+"""
+
+import asyncio
+import json
+import sys
+
+from claude_agent_sdk import ClaudeAgentOptions, HookMatcher, query
+
+from messy_tools import ALL_SUPPORT_TOOLS, SUPPORT_SERVER
+from normalize import normalize_record
+
+MODEL = "claude-sonnet-5"
+QUESTION = "Email dana@brightleaf.example. When did each of my orders get placed, and what's the status of each?"
+
+
+async def normalize_output(input_data, tool_use_id, context):
+    """Rewrite every date and status in the tool result before Claude sees it."""
+    response = input_data.get("tool_response")
+    if not isinstance(response, dict):
+        return {}
+    content = response.get("content", [])
+    if len(content) == 0:
+        return {}
+    data = json.loads(content[0].get("text", "{}"))
+    cleaned = normalize_record(data)
+    print("  [hook] normalized:", input_data["tool_name"])
+    new_response = {"content": [{"type": "text", "text": json.dumps(cleaned)}]}
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                   "updatedToolOutput": new_response}}
+
+
+async def main():
+    use_hook = True
+    if len(sys.argv) > 1 and sys.argv[1] == "raw":
+        use_hook = False
+    hooks = {}
+    if use_hook:
+        hooks = {"PostToolUse": [HookMatcher(matcher="mcp__support__.*", 
+                                             hooks=[normalize_output])]}
+    if use_hook:
+        print("=== PostToolUse hook ON ===")
+    else:
+        print("=== Raw tool output ===")
+    options = ClaudeAgentOptions(model=MODEL, 
+                                 mcp_servers={"support": SUPPORT_SERVER},
+                                 allowed_tools=ALL_SUPPORT_TOOLS, 
+                                 hooks=hooks, 
+                                 max_budget_usd=1.0)
+    async for message in query(prompt=QUESTION, options=options):
+        if hasattr(message, "result"):
+            print(message.result)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

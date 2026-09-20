@@ -1,0 +1,8 @@
+# Module 1: raw Messages API
+anthropic==1.2.0
+
+# Modules 2 and up: Claude Agent SDK.
+# The SDK drives the Claude Code CLI, so Node and @anthropic-ai/claude-code
+# must also be installed. The devcontainer does this automatically; see the
+# root README for local setup.
+claude-agent-sdk==0.2.152
