@@ -1,25 +1,22 @@
 """Demo: Fix a code review that contradicts itself.
 
 The failure: one pass over a whole pull request flags a pattern in one file
-and approves the same pattern in another. The exam calls the cause attention
+and approves the same pattern in another, and gives some files four
+paragraphs while others get one line. The exam calls the cause attention
 dilution.
 
-The fix is prompt chaining. This file is a chain of three model calls with a
-code check between each one:
+The fix, in the exam's own words: analyze each file individually, then run a
+cross-file integration pass. Two stages. The exam calls this prompt chaining.
 
-    per-file review  ->  gate  ->  integration  ->  reconcile  ->  gate
-
-Every step is one plain API call. Text in, text out, no tools. Python reads
-the files, Python decides the order, and Python hands each step's output to
-the next. The gates are ordinary if-statements that stop the chain when a
-step comes back wrong. That is what makes this a workflow and not an agent.
+Every call here is one plain API call. Text in, text out, no tools. Python
+reads the files, Python decides the order, and Python hands stage one's
+output to stage two. That is what makes it a workflow and not an agent.
 
 Run it:
     python two_pass_review.py
 """
 
 import glob
-import sys
 
 import anthropic
 
@@ -37,10 +34,10 @@ client = anthropic.Anthropic()
 
 
 def ask(prompt):
-    """One plain API call. Text in, text out. No tools."""
+    """One plain API call. A prompt goes in, text comes out. No tools."""
     response = client.messages.create(
         model=MODEL,
-        max_tokens=2000,
+        max_tokens=4000,
         messages=[{"role": "user", "content": prompt}],
     )
     text = ""
@@ -56,10 +53,8 @@ def read_file(path):
         return handle.read()
 
 
-# --- Step 1 -----------------------------------------------------------------
-
-def review_each_file(files):
-    """One focused call per file. Each call sees a single file and nothing else."""
+def stage_one(files):
+    """Analyze each file individually. One call per file, one file per call."""
     findings = ""
     for path in files:
         print(f"  reviewing {path}")
@@ -73,25 +68,15 @@ def review_each_file(files):
     return findings
 
 
-def gate_every_file_reviewed(files, findings):
-    """Code check: every file must have a section before we go on."""
-    for path in files:
-        if f"## {path}" not in findings:
-            sys.exit(f"Gate failed: no review section for {path}. Stopping.")
-    print("  gate passed: every file has a review section")
-
-
-# --- Step 2 -----------------------------------------------------------------
-
-def find_cross_file_issues(files, local_findings):
-    """One call whose only job is comparing files to each other."""
-    print("  comparing files")
+def stage_two(files, stage_one_findings):
+    """Cross-file integration pass. One call that gets stage one's output."""
+    print("  comparing all files together")
     all_code = ""
     for path in files:
         all_code = all_code + f"\n\n### {path}\n```python\n{read_file(path)}\n```"
     prompt = (
         "Here are per-file review findings for a pull request:\n"
-        f"{local_findings}\n\n"
+        f"{stage_one_findings}\n\n"
         "Here is every file in the pull request:"
         f"{all_code}\n\n"
         "Report only cross-file issues: the same pattern handled differently "
@@ -101,66 +86,24 @@ def find_cross_file_issues(files, local_findings):
     return ask(prompt)
 
 
-# --- Step 3 -----------------------------------------------------------------
-
-def reconcile(local_findings, cross_file_findings):
-    """One call that fixes contradictions and produces the final review.
-
-    This is the step the demo is named for. It gets everything the earlier
-    steps produced and is asked to find places where the review disagrees
-    with itself: the same pattern flagged in one file and passed in another.
-    """
-    print("  reconciling")
-    prompt = (
-        "You are producing the final version of a code review.\n\n"
-        "Per-file findings:\n"
-        f"{local_findings}\n\n"
-        "Cross-file findings:\n"
-        f"{cross_file_findings}\n\n"
-        "Do three things.\n"
-        "1. Find every place these findings contradict each other, meaning "
-        "the same pattern was flagged in one file and passed in another, or "
-        "two findings give conflicting advice. Resolve each one and say how.\n"
-        "2. Merge everything into one list with no duplicates.\n"
-        "3. Order it: bugs that lose data or money first, consistency issues "
-        "second, everything else last.\n\n"
-        "End with exactly one line in this form:\n"
-        "CONTRADICTIONS RESOLVED: <number>"
-    )
-    return ask(prompt)
-
-
-def gate_reconciled(final_review):
-    """Code check: the reconcile step must report its contradiction count."""
-    if "CONTRADICTIONS RESOLVED:" not in final_review:
-        sys.exit("Gate failed: reconcile step did not report a count. Stopping.")
-    last_line = final_review.strip().splitlines()[-1]
-    print(f"  gate passed: {last_line}")
-
-
-# --- The chain --------------------------------------------------------------
-
 def main():
     files = sorted(glob.glob(TARGET + "/**/*.py", recursive=True))
-    print(f"Reviewing {len(files)} files as a chain of three steps.\n")
+    print(f"Reviewing {len(files)} files in two stages.\n")
 
-    print("Step 1: review each file on its own")
-    local_findings = review_each_file(files)
-    gate_every_file_reviewed(files, local_findings)
+    print("Stage 1: analyze each file individually")
+    stage_one_findings = stage_one(files)
+    print("\n--- stage 1 findings ---")
+    print(stage_one_findings)
 
-    print("\nStep 2: compare the files to each other")
-    cross_file_findings = find_cross_file_issues(files, local_findings)
+    print("\nStage 2: cross-file integration pass")
+    stage_two_findings = stage_two(files, stage_one_findings)
+    print("\n--- stage 2 findings ---")
+    print(stage_two_findings)
 
-    print("\nStep 3: reconcile and produce the final review")
-    final_review = reconcile(local_findings, cross_file_findings)
-    gate_reconciled(final_review)
-
-    print("\n" + "=" * 60)
-    print(final_review)
-    print("=" * 60)
     print(
-        "\nThree steps, each handed the output of the one before, with a code "
-        "check between them. The order was fixed before anything ran."
+        "\nStage 1 gave every file the same attention. Stage 2 is the only "
+        "call that was asked to compare files, and it got stage 1's findings "
+        "as its input. That handoff is the chain."
     )
 
 
