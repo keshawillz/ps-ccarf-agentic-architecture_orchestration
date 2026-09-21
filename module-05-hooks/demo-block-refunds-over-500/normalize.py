@@ -39,3 +39,61 @@ def normalize_record(data):
             cleaned.append(normalize_record(item))
         return cleaned
     return data
+
+def extract_text(response):
+    """Pull the text payload out of a tool response, whatever shape it is.
+
+    Hook payload shapes vary by SDK version and tool type. Handle the plausible
+    ones instead of assuming, and return "" when there is no text.
+    """
+    if response is None:
+        return ""
+    if isinstance(response, str):
+        return response
+    if isinstance(response, dict):
+        content = response.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list) and len(content) > 0:
+            first = content[0]
+            if isinstance(first, dict):
+                return first.get("text", "")
+            if isinstance(first, str):
+                return first
+        if "text" in response:
+            return response["text"]
+        return ""
+    if isinstance(response, list) and len(response) > 0:
+        first = response[0]
+        if isinstance(first, dict):
+            return first.get("text", "")
+        if isinstance(first, str):
+            return first
+    return ""
+
+
+def rebuild_like(original, new_text):
+    """Put new_text back into the same shape the original response used.
+
+    updatedToolOutput replaces what Claude reads, and it has to look like what
+    the tool would have returned. So mirror the incoming shape instead of
+    guessing one.
+    """
+    if isinstance(original, str):
+        return new_text
+    if isinstance(original, dict):
+        content = original.get("content")
+        if isinstance(content, str):
+            return {"content": new_text}
+        if isinstance(content, list) and len(content) > 0:
+            first = content[0]
+            if isinstance(first, dict):
+                return {"content": [{"type": "text", "text": new_text}]}
+            return {"content": [new_text]}
+        if "text" in original:
+            return {"text": new_text}
+    if isinstance(original, list) and len(original) > 0:
+        if isinstance(original[0], dict):
+            return [{"type": "text", "text": new_text}]
+        return [new_text]
+    return {"content": [{"type": "text", "text": new_text}]}
